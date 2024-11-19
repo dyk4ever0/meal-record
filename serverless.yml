@@ -1,0 +1,28 @@
+org: daewoong
+app: extract-record
+service: meal-record
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  environment: 
+    OPENAI_API_KEY: ${env:OPENAI_API_KEY} #배포시 환경변수 '''export GPT_API_KEY=your_gpt_api_key serverless deploy'''
+
+functions:
+  recordMeal:
+    handler: handler.recordMeal
+    events:
+      - http:
+          path: meal/record
+          method: post
+          cors: true
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+custom:
+  dotenv:
+    path: .env
+  serverless-offline:
+    httpPort: 4000
