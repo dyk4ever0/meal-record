@@ -12,6 +12,36 @@ const openai = new OpenAIApi(configuration);
 module.exports.recordMeal = async (event) => {
   try {
     const body = JSON.parse(event.body);
+    if (!body.foodName) {
+      return {
+        statusCode: 401,
+        body: JSON.stringify({ code: 401, message: '음식명이 없습니다' }),
+      };
+    }
+
+    if (
+      !body.quantity ||
+      body.quantity <= 0 ||
+      !Number.isInteger(body.quantity)
+    ) {
+      return {
+        statusCode: 402,
+        body: JSON.stringify({ code: 402, message: '섭취량이 올바르지 않습니다' }),
+      };
+    }
+
+    if (
+      body.unit === undefined ||
+      body.unit === null ||
+      !Number.isInteger(body.unit) ||
+      body.unit < 0 ||
+      body.unit > 4
+    ) {
+      return {
+        statusCode: 403,
+        body: JSON.stringify({ code: 403, message: '섭취량 단위가 올바르지 않습니다' }),
+      };
+    }
 
     const unitMapping = {
       0: 'servings',
@@ -33,7 +63,7 @@ module.exports.recordMeal = async (event) => {
         },
         {
           role: 'user',
-          content: `Food name: ${body.foodName}, Quantity: ${body.quantity} ${unitText}. Please return ONLY the nutritional information (carbohydrate, sugar, dietaryFiber, protein, fat) as a JSON object without any additional text or explanations.`,
+          content: `Food name: ${body.foodName}, Quantity: ${body.quantity} ${unitText}. Please return ONLY the nutritional information as a JSON object, using numeric values without any units or text. The fields should be: carbohydrate, sugar, dietaryFiber, protein, fat.`,
         },
       ],
     });
@@ -62,15 +92,42 @@ module.exports.recordMeal = async (event) => {
     if (!nutritionData || typeof nutritionData !== 'object') {
       throw new Error('Nutrition data is missing or not an object');
     }
+
+    function parseNutrientValue(value) {
+      if (typeof value === 'string') {
+        const number = value.replace(/[^\d.]/g, '');
+        return parseFloat(number);
+      } else if (typeof value === 'number') {
+        return value;
+      } else {
+        return NaN;
+      }
+    }
+
+    const carbohydrate = parseNutrientValue(nutritionData.carbohydrate);
+    const sugar = parseNutrientValue(nutritionData.sugar);
+    const dietaryFiber = parseNutrientValue(nutritionData.dietaryFiber);
+    const protein = parseNutrientValue(nutritionData.protein);
+    const fat = parseNutrientValue(nutritionData.fat);
+
+    if (
+      isNaN(carbohydrate) ||
+      isNaN(sugar) ||
+      isNaN(dietaryFiber) ||
+      isNaN(protein) ||
+      isNaN(fat)
+    ) {
+      throw new Error('Invalid nutrient values received from GPT');
+    }
     const response = {
       foodName: body.foodName,
       quantity: body.quantity,
       unit: body.unit,
-      carbohydrate: nutritionData.carbohydrate,
-      sugar: nutritionData.sugar,
-      dietaryFiber: nutritionData.dietaryFiber,
-      protein: nutritionData.protein,
-      fat: nutritionData.fat,
+      carbohydrate: carbohydrate,
+      sugar: sugar,
+      dietaryFiber: dietaryFiber,
+      protein: protein,
+      fat: fat,
     };
 
     return {

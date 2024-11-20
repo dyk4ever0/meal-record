@@ -28,7 +28,8 @@ serverless
 ```
 npm install serverless-dotenv-plugin --save-dev
 serverless offline
-
+```
+```
 curl -X POST http://localhost:4000/dev/meal/record \
 -H "Content-Type: application/json" \
 -d '{"foodName": "감자", "quantity": 2, "unit": 0}'
