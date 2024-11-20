@@ -10,6 +10,32 @@ authorName: 'Serverless, Inc.'
 authorAvatar: 'https://avatars1.githubusercontent.com/u/13742415?s=200&v=4'
 -->
 
+## 로컬에 세팅 과정
+1. 서버리스 설치
+(node.js 런타임 version 18.20.3 이상)
+nvm use 18.20.3
+
+```   
+npm i serverless -g
+```
+
+2. 프로젝트/앱 생성
+```
+serverless
+```
+
+3. 로컬에서 실행(기본 3000 현재 4000 포트 사용, .yml 파일 내 커스텀)
+```
+npm install serverless-dotenv-plugin --save-dev
+serverless offline
+
+curl -X POST http://localhost:4000/dev/meal/record \
+-H "Content-Type: application/json" \
+-d '{"foodName": "감자", "quantity": 2, "unit": 0}'
+```
+
+---
+
 # Serverless Framework Node HTTP API on AWS
 
 This template demonstrates how to make a simple HTTP API with Node.js running on AWS Lambda and API Gateway using the Serverless Framework.

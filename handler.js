@@ -2,58 +2,75 @@
 
 require('dotenv').config();
 
-const OpenAI = require('openai');
-const openai = new OpenAI({
+const { Configuration, OpenAIApi } = require('openai');
+
+const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
 });
+const openai = new OpenAIApi(configuration);
 
 module.exports.recordMeal = async (event) => {
   try {
     const body = JSON.parse(event.body);
 
-    if (!body.foodName) {
-      return {
-        statusCode: 401,
-        body: JSON.stringify({ code: 401, message: "음식명이 없습니다" }),
-      };
-    }
+    const unitMapping = {
+      0: 'servings',
+      1: 'pieces',
+      2: 'plates',
+      3: 'grams',
+      4: 'milliliters',
+    };
 
-    if (!body.quantity || body.quantity <= 0 || !Number.isInteger(body.quantity)) {
-      return {
-        statusCode: 402,
-        body: JSON.stringify({ code: 402, message: "섭취량이 올바르지 않습니다" }),
-      };
-    }
+    const unitText = unitMapping[body.unit];
 
-    const gptResponse = await openai.chat.completions.create({
-      model: "gpt-4",
+    const gptResponse = await openai.createChatCompletion({
+      model: 'gpt-4',
       messages: [
         {
-          role: "system",
-          content: "You generate nutritional information for given food based on the input food name and quantity."
+          role: 'system',
+          content:
+            'You generate nutritional information for given food based on the input food name, quantity, and unit.',
         },
         {
-          role: "user",
-          content: `Food name: ${body.foodName}, Quantity: ${body.quantity} servings. Please return the nutritional information (carbohydrate, sugar, dietaryFiber, protein, fat) as JSON.`
-        }
-      ]
+          role: 'user',
+          content: `Food name: ${body.foodName}, Quantity: ${body.quantity} ${unitText}. Please return ONLY the nutritional information (carbohydrate, sugar, dietaryFiber, protein, fat) as a JSON object without any additional text or explanations.`,
+        },
+      ],
     });
 
-    const rawContent = gptResponse.choices[0].message.content;
-    //console.log("GPT Raw Response:", rawContent);
+    const rawContent = gptResponse.data.choices[0].message.content;
+    //console.log('GPT Raw Response:', rawContent);
 
     let nutritionData;
     try {
-      nutritionData = JSON.parse(rawContent);
+      nutritionData = JSON.parse(rawContent.trim());
     } catch (error) {
-      console.error("Failed to parse GPT response:", rawContent);
-      throw new Error("Invalid JSON format returned by GPT");
+      const jsonMatch = rawContent.match(/{[\s\S]*}/);
+      if (jsonMatch) {
+        try {
+          nutritionData = JSON.parse(jsonMatch[0]);
+        } catch (err) {
+          console.error('Failed to parse JSON from GPT response:', rawContent);
+          throw new Error('Invalid JSON format returned by GPT');
+        }
+      } else {
+        console.error('No JSON found in GPT response:', rawContent);
+        throw new Error('No JSON data returned by GPT');
+      }
     }
 
+    if (!nutritionData || typeof nutritionData !== 'object') {
+      throw new Error('Nutrition data is missing or not an object');
+    }
     const response = {
       foodName: body.foodName,
       quantity: body.quantity,
-      ...nutritionData
+      unit: body.unit,
+      carbohydrate: nutritionData.carbohydrate,
+      sugar: nutritionData.sugar,
+      dietaryFiber: nutritionData.dietaryFiber,
+      protein: nutritionData.protein,
+      fat: nutritionData.fat,
     };
 
     return {
@@ -61,10 +78,14 @@ module.exports.recordMeal = async (event) => {
       body: JSON.stringify(response),
     };
   } catch (error) {
-    console.error("Error occurred:", error);
+    console.error('Error occurred:', error);
     return {
       statusCode: 501,
-      body: JSON.stringify({ code: 501, message: "영양 성분 계산에 실패했습니다", error: error.message }),
+      body: JSON.stringify({
+        code: 501,
+        message: '영양 성분 계산에 실패했습니다',
+        error: error.message,
+      }),
     };
   }
 };

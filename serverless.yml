@@ -19,7 +19,7 @@ functions:
 
 plugins:
   - serverless-offline
-  - serverless-dotenv-plugin
+  #- serverless-dotenv-plugin
 
 custom:
   dotenv:
