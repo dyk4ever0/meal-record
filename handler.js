@@ -70,12 +70,38 @@ module.exports.recordMeal = async (event) => {
 
     const unitText = unitMapping[body.unit];
 
-    const system_instruction = `
-주어진 음식명을 바탕으로, 다음 단계를 순서대로 따라 1회 제공량과 평균적인 영양 성분을 생성하세요:
+//     const systemInstruction = `
+// 주어진 음식명을 바탕으로, 다음 단계를 순서대로 따라 1회 제공량과 영양 성분을 생성하세요:
 
-1. 음식명을 분석하여 해당 음식의 일반적인 종류와 전형적인 서빙 크기를 파악합니다.  
-2. 음식 종류와 서빙 크기를 참고하여 1회 제공량(g)을 추정합니다.
-3. 주어진 음식명만을 바탕으로, 평균적인 영양 성분(탄수화물, 스타치, 당류, 식이섬유, 단백질, 지방)을 생성합니다.  
+// 1. 음식명을 분석하여 해당 음식의 일반적인 종류와 전형적인 서빙 크기를 파악합니다.  
+//    - 주어진 데이터가 음식명이 아닐 경우, 모든 key의 value에 -1을 할당하여 반환하세요.
+// 2. 음식 종류와 서빙 크기를 참고하여 1회 제공량(g)을 추정합니다.
+// 3. 주어진 음식명만을 바탕으로, 평균적인 영양 성분(탄수화물, 스타치, 당류, 식이섬유, 단백질, 지방)을 생성합니다.  
+//    - 각 영양 성분은 USDA, 한국 식약처 데이터베이스 등 공인된 데이터베이스의 일반적인 수치를 참고하여 생성하세요.  
+//    - 탄수화물(g)은 다음 계산식을 따릅니다:  
+//      탄수화물(g) = 스타치(g) + 당류(g) + 식이섬유(g).  
+// 4. 최종 결과를 아래 JSON 형식으로 출력합니다.
+//    - 출력 형식 이외의 텍스트를 생성하지 않도록 유의하세요.
+
+// 출력 형식:
+// {
+//     "surving_size": 음식의 일반적 1회 제공량 추정치,
+//     "carbohydrate": (스타치 + 당류 + 식이섬유의 총합),
+//     "starch": (음식의 평균적 스타치 총량),
+//     "sugar": (음식의 평균적 당류 총량),
+//     "dietaryFiber": (음식의 평균적 식이섬유 총량),
+//     "protein": (음식의 평균적 단백질 총량),
+//     "fat": (음식의 평균적 지방 총량)
+// }
+// `
+
+    const systemInstruction = `
+주어진 음식명과 섭취량을 바탕으로, 다음 단계를 순서대로 따라 1회 제공량과 영양 성분을 생성하세요:
+
+1. 음식명을 분석하여 해당 음식의 종류를 파악합니다.  
+   - 주어진 데이터가 음식명이 아닐 경우, 이후 단계를 생략하고 출력 형식의 모든 key의 value에 -1을 할당하여 반환하세요.
+2. 음식 종류와 섭취량을 참고하여 1회 제공량(g)을 추정합니다.
+3. 주어진 음식명과 섭취량을 바탕으로, 평균적인 영양 성분(탄수화물, 스타치, 당류, 식이섬유, 단백질, 지방)을 생성합니다.  
    - 각 영양 성분은 USDA, 한국 식약처 데이터베이스 등 공인된 데이터베이스의 일반적인 수치를 참고하여 생성하세요.  
    - 탄수화물(g)은 다음 계산식을 따릅니다:  
      탄수화물(g) = 스타치(g) + 당류(g) + 식이섬유(g).  
@@ -84,7 +110,7 @@ module.exports.recordMeal = async (event) => {
 
 출력 형식:
 {
-    "surving_size": 음식의 일반적 1회 제공량 추정치,
+    "surving_size": (음식의 일반적 1회 제공량 추정치),
     "carbohydrate": (스타치 + 당류 + 식이섬유의 총합),
     "starch": (음식의 평균적 스타치 총량),
     "sugar": (음식의 평균적 당류 총량),
@@ -92,24 +118,26 @@ module.exports.recordMeal = async (event) => {
     "protein": (음식의 평균적 단백질 총량),
     "fat": (음식의 평균적 지방 총량)
 }
-`
+`;
+    const userInput = `음식명: ${body.foodName}\n서빙 크기: ${body.quantity} ${unitText}`;
 
     const gptResponse = await openai.createChatCompletion({
       model: 'gpt-4o',
       messages: [
         {
           role: 'system',
-          content: system_instruction
+          content: systemInstruction
         },
         {
           role: 'user',
-          content: body.foodName
+          content: userInput
         },
       ],
     });
 
     const rawContent = gptResponse.data.choices[0].message.content;
-    console.log('GPT Raw Response:', rawContent);
+    console.log('GPT Raw Response:', gptResponse);
+    console.log('message:', gptResponse.data.choices[0]);
 
     let nutritionData;
     try {
