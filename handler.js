@@ -116,7 +116,7 @@ module.exports.recordMeal = async (event) => {
     "fat": (음식의 평균적 지방 총량)
 }
 `;
-    const userInput = `음식명: ${body.foodName}\n서빙 크기: ${body.quantity} ${unitText}`;
+    const userInput = `음식명: ${body.foodName}\n섭취량: ${body.quantity} ${unitText}`;
 
     // 2. OpenAI API 호출 및 응답 처리
     try {
