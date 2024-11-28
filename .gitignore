@@ -1,3 +1,7 @@
 node_modules
 .serverless
-.env
+.envlogs/
+# Logs
+logs
+*.log
+firebase-credentials.json

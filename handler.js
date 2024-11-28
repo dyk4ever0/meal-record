@@ -3,6 +3,9 @@
 require('dotenv').config();
 
 const { Configuration, OpenAIApi } = require('openai');
+const logger = require('./utils/logger');
+const { sendDiscordAlert } = require('./utils/alert');
+const { logMealRequest } = require('./utils/firebaseLogger');
 
 const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
@@ -11,9 +14,16 @@ const openai = new OpenAIApi(configuration);
 
 module.exports.recordMeal = async (event) => {
   try {
-    // 0. API 키 검증
     const apiKey = event.headers['x-api-key'];
     if (!apiKey || apiKey !== process.env.API_KEY) {
+      logger.warn('Invalid API key attempt', { providedKey: apiKey });
+      await logMealRequest({
+        foodName: null,
+        quantity: null,
+        unit: null,
+        statusCode: 400,
+        error: 'Invalid API key'
+      });
       return {
         statusCode: 400,
         body: JSON.stringify({ 
@@ -23,35 +33,72 @@ module.exports.recordMeal = async (event) => {
         }),
       };
     }
-    // 1. 입력값 검증
+
     let body;
     try {
       body = JSON.parse(event.body);
     } catch (error) {
+      logger.error('Invalid JSON format', { body: event.body });
+      await logMealRequest({
+        foodName: null,
+        quantity: null,
+        unit: null,
+        statusCode: 400,
+        error: 'Invalid JSON format'
+      });
       return {
         statusCode: 400,
         body: JSON.stringify({ code: 400, message: '입력값이 유효하지 않습니다' }),
       };
     }
 
+    logger.info('API Request received', {
+      foodName: body.foodName,
+      quantity: body.quantity,
+      unit: body.unit
+    });
+
     if (!body.foodName) {
-      return {
+      logger.warn('Missing food name', { body });
+      await logMealRequest({
+        foodName: body.foodName,
+        quantity: body.quantity,
+        unit: body.unit,
         statusCode: 400,
-        body: JSON.stringify({ code: 400, message: '음식명이 없습니다' }),
-      };
-    }
-    // 공백
-    const foodNameTrimmed = body.foodName.trim();
-    if (!foodNameTrimmed) {
+        error: 'Missing food name'
+      });
       return {
         statusCode: 400,
         body: JSON.stringify({ code: 400, message: '음식명이 없습니다' }),
       };
     }
 
-    // 순수 특수문자
+    const foodNameTrimmed = body.foodName.trim();
+    if (!foodNameTrimmed) {
+      logger.warn('Empty food name after trim', { originalFoodName: body.foodName });
+      await logMealRequest({
+        foodName: body.foodName,
+        quantity: body.quantity,
+        unit: body.unit,
+        statusCode: 400,
+        error: 'Empty food name'
+      });
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ code: 400, message: '음식명이 없습니다' }),
+      };
+    }
+
     const specialCharsOnly = /^[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]+$/;
     if (specialCharsOnly.test(foodNameTrimmed)) {
+      logger.warn('Special characters only in food name', { foodName: foodNameTrimmed });
+      await logMealRequest({
+        foodName: body.foodName,
+        quantity: body.quantity,
+        unit: body.unit,
+        statusCode: 400,
+        error: 'Special characters only'
+      });
       return {
         statusCode: 400,
         body: JSON.stringify({ code: 400, message: '올바른 음식명이 아닙니다' }),
@@ -63,6 +110,14 @@ module.exports.recordMeal = async (event) => {
       body.quantity <= 0 ||
       typeof body.quantity !== 'number'
     ) {
+      logger.warn('Invalid quantity', { quantity: body.quantity });
+      await logMealRequest({
+        foodName: body.foodName,
+        quantity: body.quantity,
+        unit: body.unit,
+        statusCode: 400,
+        error: 'Invalid quantity'
+      });
       return {
         statusCode: 400,
         body: JSON.stringify({ code: 400, message: '섭취량이 올바르지 않습니다' }),
@@ -76,6 +131,14 @@ module.exports.recordMeal = async (event) => {
       body.unit < 0 ||
       body.unit > 4
     ) {
+      logger.warn('Invalid unit', { unit: body.unit });
+      await logMealRequest({
+        foodName: body.foodName,
+        quantity: body.quantity,
+        unit: body.unit,
+        statusCode: 400,
+        error: 'Invalid unit'
+      });
       return {
         statusCode: 400,
         body: JSON.stringify({ code: 400, message: '섭취량 단위가 올바르지 않습니다' }),
@@ -83,11 +146,11 @@ module.exports.recordMeal = async (event) => {
     }
 
     const unitMapping = {
-      0: '인분', // servings
-      1: '개', // pieces
-      2: '접시', //plates
-      3: 'g', // grams 
-      4: 'ml', // milliliters
+      0: '인분',
+      1: '개',
+      2: '접시',
+      3: 'g',
+      4: 'ml',
     };
 
     const unitText = unitMapping[body.unit];
@@ -118,7 +181,6 @@ module.exports.recordMeal = async (event) => {
 `;
     const userInput = `음식명: ${body.foodName}\n서빙 크기: ${body.quantity} ${unitText}`;
 
-    // 2. OpenAI API 호출 및 응답 처리
     try {
       const gptResponse = await openai.createChatCompletion({
         model: 'gpt-4o',
@@ -136,8 +198,15 @@ module.exports.recordMeal = async (event) => {
 
       const rawContent = gptResponse.data.choices[0].message.content;
       
-      // 2-1. "None" 체크
       if (rawContent.includes('None')) {
+        logger.info('AI unable to calculate nutrition', { foodName: body.foodName });
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 510,
+          error: 'AI unable to calculate'
+        });
         return {
           statusCode: 510,
           body: JSON.stringify({
@@ -147,7 +216,6 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 2-2. JSON 파싱 시도
       let nutritionData;
       try {
         const jsonMatch = rawContent.match(/{[\s\S]*?}/);
@@ -158,7 +226,17 @@ module.exports.recordMeal = async (event) => {
           nutritionData = JSON.parse(potentialJSON);
         }
       } catch (error) {
-        console.error('Failed to parse JSON from GPT response:', rawContent);
+        logger.error('JSON parsing failed', { 
+          error: error.message,
+          rawContent 
+        });
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 500,
+          error: 'JSON parsing failed'
+        });
         return {
           statusCode: 500,
           body: JSON.stringify({
@@ -169,8 +247,15 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 2-3. 영양성분 데이터 검증
       if (!nutritionData || typeof nutritionData !== 'object') {
+        logger.error('Invalid nutrition data structure', { nutritionData });
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 500,
+          error: 'Invalid nutrition data structure'
+        });
         return {
           statusCode: 500,
           body: JSON.stringify({
@@ -181,7 +266,6 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 2-4. 영양성분 값 파싱
       function parseNutrientValue(value) {
         if (typeof value === 'string') {
           const number = value.replace(/[^\d.]/g, '');
@@ -199,7 +283,6 @@ module.exports.recordMeal = async (event) => {
       const fat = parseNutrientValue(nutritionData.fat);
       const starch = parseNutrientValue(nutritionData.starch);
 
-      // 2-5. 파싱값 검증
       if (
         isNaN(carbohydrate) ||
         isNaN(sugar) ||
@@ -214,6 +297,16 @@ module.exports.recordMeal = async (event) => {
         fat < 0 ||
         starch < 0
       ) {
+        logger.error('Invalid nutrient values', { 
+          carbohydrate, sugar, dietaryFiber, protein, fat, starch 
+        });
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 500,
+          error: 'Invalid nutrient values'
+        });
         return {
           statusCode: 500,
           body: JSON.stringify({
@@ -223,7 +316,7 @@ module.exports.recordMeal = async (event) => {
           }),
         };
       }
-      // 2-6. 성공 응답
+
       const response = {
         carbohydrate,
         sugar,
@@ -233,21 +326,39 @@ module.exports.recordMeal = async (event) => {
         starch
       };
 
+      logger.info('Nutrition calculation success', {
+        foodName: body.foodName,
+        nutrition: response
+      });
+
+      await logMealRequest({
+        foodName: body.foodName,
+        quantity: body.quantity,
+        unit: body.unit,
+        nutrition: response,
+        statusCode: 200
+      });
+
       return {
         statusCode: 200,
         body: JSON.stringify(response),
       };
 
     } catch (error) {
-      // 3. OpenAI API 에러 처리
-      console.error('OpenAI API Error:', error);
+      logger.error('OpenAI API Error:', error);
       
       const statusCode = error.response?.status;
       const errorCode = error.response?.data?.error?.code;
       const errorType = error.response?.data?.error?.type;
 
-      // 3-1. API 오류 (400번대)
       if (statusCode === 400) {
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 500,
+          error: 'Invalid request to OpenAI'
+        });
         return {
           statusCode: 500,
           body: JSON.stringify({
@@ -258,8 +369,15 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 3-2. 인증 관련 오류 (401, 403)
       if (statusCode === 401 || statusCode === 403) {
+        await sendDiscordAlert(error);
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 500,
+          error: 'Authentication failed'
+        });
         return {
           statusCode: 500,
           body: JSON.stringify({
@@ -270,9 +388,16 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 3-3. Rate limit 초과 (429)
       if (statusCode === 429) {
+        await sendDiscordAlert(error);
         if (errorType === 'tokens') {
+          await logMealRequest({
+            foodName: body.foodName,
+            quantity: body.quantity,
+            unit: body.unit,
+            statusCode: 503,
+            error: 'Token quota exceeded'
+          });
           return {
             statusCode: 503,
             body: JSON.stringify({
@@ -282,6 +407,13 @@ module.exports.recordMeal = async (event) => {
             }),
           };
         }
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 503,
+          error: 'Rate limit exceeded'
+        });
         return {
           statusCode: 503,
           body: JSON.stringify({
@@ -292,8 +424,15 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 3-4. 서버 오류 (500번대)
       if (statusCode >= 500) {
+        await sendDiscordAlert(error);
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 503,
+          error: 'OpenAI server error'
+        });
         return {
           statusCode: 503,
           body: JSON.stringify({
@@ -303,8 +442,14 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 3-5. Context length 초과
       if (errorCode === 'context_length_exceeded') {
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 400,
+          error: 'Input too long'
+        });
         return {
           statusCode: 400,
           body: JSON.stringify({
@@ -315,8 +460,15 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 3-6. 타임아웃
       if (errorType === 'timeout') {
+        await sendDiscordAlert(error);
+        await logMealRequest({
+          foodName: body.foodName,
+          quantity: body.quantity,
+          unit: body.unit,
+          statusCode: 503,
+          error: 'Request timeout'
+        });
         return {
           statusCode: 503,
           body: JSON.stringify({
@@ -327,7 +479,13 @@ module.exports.recordMeal = async (event) => {
         };
       }
 
-      // 3-7. 기타 오류
+      await logMealRequest({
+        foodName: body.foodName,
+        quantity: body.quantity,
+        unit: body.unit,
+        statusCode: 500,
+        error: error.message
+      });
       return {
         statusCode: 500,
         body: JSON.stringify({
@@ -338,8 +496,17 @@ module.exports.recordMeal = async (event) => {
       };
     }
   } catch (error) {
-    // 4. 최상위 에러 처리
-    console.error('Error occurred:', error);
+    logger.error('Unexpected error', {
+      error: error.message,
+      stack: error.stack
+    });
+    await logMealRequest({
+      foodName: null,
+      quantity: null,
+      unit: null,
+      statusCode: 500,
+      error: 'Unexpected error: ' + error.message
+    });
     return {
       statusCode: 500,
       body: JSON.stringify({
