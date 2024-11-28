@@ -24,7 +24,7 @@ npm i serverless -g
 serverless
 ```
 
-3. 로컬에서 실행(기본 3000 현재 4000 포트 사용, .yml 파일 내 커스텀)
+1. 실행(기본 3000 로컬에선 4000 포트 사용, .yml 파일 내 커스텀)
 ```
 npm install serverless-dotenv-plugin --save-dev
 serverless offline
@@ -32,9 +32,36 @@ serverless offline
 ```
 curl -X POST http://localhost:4000/dev/meal/record \
 -H "Content-Type: application/json" \
--d '{"foodName": "감자", "quantity": 2, "unit": 0}'
+-H "x-api-key: apikey" \
+-d '{"foodName": "회식", "quantity": 1, "unit": 0}'
 ```
 
+4. 테스트코드 실행(package.json 내 jest 실행)
+```
+npm test
+```
+
+- 검증 로직
+    - **성공 케이스 (200)**
+        - 정상적인 응답 → logging
+    - **API 키 검증 (400)**
+        - API 키 누락
+        - 잘못된 API 키
+    - **입력값 검증 (400)**
+        - 잘못된 JSON 형식
+        - 음식명 누락
+        - 잘못된 섭취량
+        - 잘못된 단위값
+    - **OpenAI API 응답 처리**
+        - AI 계산 불가능 (=None) (510)
+        - 음수 영양성분 값 (500)
+        - 필수 영양성분 필드 누락 (500)
+    - **OpenAI API 에러**
+        - Rate limit 초과 (503) → alarm
+        - Context length 초과 (400)
+        - 타임아웃 (503) → alarm
+  
+---
 ---
 
 # Serverless Framework Node HTTP API on AWS
