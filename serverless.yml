@@ -4,7 +4,7 @@ service: meal-record
 
 provider:
   name: aws
-  runtime: nodejs20.x
+  runtime: nodejs18.x #20
   environment: 
     OPENAI_API_KEY: ${env:OPENAI_API_KEY} #배포시 환경변수 '''export GPT_API_KEY=your_gpt_api_key serverless deploy'''
 
