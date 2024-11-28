@@ -35,6 +35,11 @@ curl -X POST http://localhost:4000/dev/meal/record \
 -d '{"foodName": "감자", "quantity": 2, "unit": 0}'
 ```
 
+4. 테스트코드 실행(package.json 내 jest 실행)
+```
+npm test
+```
+
 ---
 
 # Serverless Framework Node HTTP API on AWS
